@@ -18,7 +18,7 @@ COPY handler.py .
 # ARG permite pasar el token durante el build para descargar los pesos oficiales
 ARG HF_TOKEN
 ENV HF_TOKEN=$HF_TOKEN
-RUN python -c "import os; from huggingface_hub import login; login(os.environ.get('HF_TOKEN')) if os.environ.get('HF_TOKEN') else None; from transformers import Sam3Processor, Sam3Model; Sam3Processor.from_pretrained('facebook/sam3'); Sam3Model.from_pretrained('facebook/sam3')"
+RUN python -c "import os; from huggingface_hub import login; login(os.environ.get('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')) if os.environ.get('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') else None; from transformers import Sam3Processor, Sam3Model; Sam3Processor.from_pretrained('facebook/sam3'); Sam3Model.from_pretrained('facebook/sam3')"
 
 # 🛠️ PERMISOS TOTALES: Permite que el usuario dinámico de RunPod lea la caché
 RUN chmod -R 777 /app/cache
