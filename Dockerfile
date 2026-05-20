@@ -1,24 +1,18 @@
-FROM runpod/base:0.4.0-cuda11.8.0
+FROM runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04
 
-WORKDIR /app
-
-# Variables de entorno para cachear modelos
-ENV HF_HOME=/app/cache
-ENV TRANSFORMERS_CACHE=/app/cache
-ENV TORCH_HOME=/app/cache
-
-# Crear carpeta de caché ANTES de precargar
-RUN mkdir -p /app/cache
+WORKDIR /
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 1. Declarar que recibiremos un token durante la construcción
+ARG HF_TOKEN
+# 2. Convertirlo en variable de entorno para que transformers lo use
+ENV HF_TOKEN=$HF_TOKEN
+
+# 3. Descargar el modelo (detectará el ENV HF_TOKEN automáticamente)
+RUN python -c "from transformers import Sam3Model, Sam3Processor; Sam3Model.from_pretrained('facebook/sam3'); Sam3Processor.from_pretrained('facebook/sam3')"
+
 COPY handler.py .
 
-# 🔥 PRECARGA COMPLETA de SAM3 (TODO en UNA sola línea)
-RUN python -c "import torch; import numpy as np; from transformers import SamModel, SamProcessor; print('Precargando SAM3...'); model = SamModel.from_pretrained('facebook/sam-vit-huge'); processor = SamProcessor.from_pretrained('facebook/sam-vit-huge'); model.eval(); dummy_image = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8); inputs = processor(images=dummy_image, return_tensors='pt'); with torch.no_grad(): _ = model(**inputs); print('Precarga completada')"
-
-# Permisos para el usuario dinámico de RunPod
-RUN chmod -R 777 /app/cache
-
-CMD ["python", "-u", "handler.py"]
+CMD ["python", "-u", "/handler.py"]
