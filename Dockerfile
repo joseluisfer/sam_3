@@ -15,24 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY handler.py .
 
-# 🔥 PRECARGA COMPLETA de SAM3 (para evitar descarga en el primer request)
-RUN python -c "
-import torch
-import numpy as np
-from transformers import SamModel, SamProcessor
-
-print('Precargando SAM3...')
-model = SamModel.from_pretrained('facebook/sam-vit-huge')
-processor = SamProcessor.from_pretrained('facebook/sam-vit-huge')
-model.eval()
-
-# Test dummy para forzar compilaciones
-dummy_image = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
-inputs = processor(images=dummy_image, return_tensors='pt')
-with torch.no_grad():
-    _ = model(**inputs)
-print('Precarga completada')
-"
+# 🔥 PRECARGA COMPLETA de SAM3 (TODO en UNA sola línea)
+RUN python -c "import torch; import numpy as np; from transformers import SamModel, SamProcessor; print('Precargando SAM3...'); model = SamModel.from_pretrained('facebook/sam-vit-huge'); processor = SamProcessor.from_pretrained('facebook/sam-vit-huge'); model.eval(); dummy_image = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8); inputs = processor(images=dummy_image, return_tensors='pt'); with torch.no_grad(): _ = model(**inputs); print('Precarga completada')"
 
 # Permisos para el usuario dinámico de RunPod
 RUN chmod -R 777 /app/cache
