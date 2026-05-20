@@ -7,8 +7,8 @@ ENV TORCH_HOME=/app/cache
 
 RUN mkdir -p /app/cache
 
-# 🔥 ACTUALIZAMOS PYTORCH PARA CUMPLIR LOS REQUISITOS DE TRANSFORMERS 🔥
-RUN pip install torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cu121
+# 🔥 ACTUALIZAMOS A PYTORCH 2.5.1 PARA SOLUCIONAR EL ERROR DE INFER_SCHEMA 🔥
+RUN pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 
 # Instalamos el resto de dependencias
 COPY requirements.txt .
