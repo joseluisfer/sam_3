@@ -21,15 +21,15 @@ try:
     # 2. Iniciamos sesión en Hugging Face
     login(hf_token)
     
-    # 3. Descargamos/Cargamos el modelo (Esto tardará unos segundos el primer arranque)
+# 3. Descargamos/Cargamos el modelo oficial de SAM 3
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Descargando/Cargando SAM 3 en {device}...", flush=True)
+    print(f"Descargando/Cargando SAM 3 (Hiera Base) en {device}...", flush=True)
     
-    processor = Sam3Processor.from_pretrained("facebook/sam3")
-    model = Sam3Model.from_pretrained("facebook/sam3").to(device)
+    # 💥 CAMBIAMOS 'facebook/sam3' POR EL REPOSITORIO REAL 💥
+    processor = Sam3Processor.from_pretrained("facebook/sam3-hiera-base")
+    model = Sam3Model.from_pretrained("facebook/sam3-hiera-base").to(device)
     
     print("Modelo cargado exitosamente.", flush=True)
-
 except Exception as e:
     print(f"ERROR CRÍTICO AL CARGAR EL MODELO: {str(e)}", flush=True)
     sys.exit(1)
