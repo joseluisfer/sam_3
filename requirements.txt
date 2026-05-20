@@ -1,7 +1,7 @@
 runpod
-numpy
+numpy<2.0.0
 opencv-python-headless
 requests
-transformers>=4.40.0
+transformers
 Pillow
 huggingface-hub
