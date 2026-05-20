@@ -5,16 +5,31 @@ import cv2
 import requests
 import sys
 import torch
+import os
 from PIL import Image
 from transformers import Sam3Processor, Sam3Model
+from huggingface_hub import login
 
-print("Iniciando contenedor y cargando modelo SAM 3...", flush=True)
+print("Iniciando contenedor y verificando token...", flush=True)
+
 try:
-    # SAM 3 detectará automáticamente la GPU
+    # 1. Leemos el token que pusiste en la interfaz web de RunPod
+    hf_token = os.environ.get("HF_TOKEN")
+    if not hf_token:
+        raise ValueError("No se encontró la variable HF_TOKEN en RunPod.")
+    
+    # 2. Iniciamos sesión en Hugging Face
+    login(hf_token)
+    
+    # 3. Descargamos/Cargamos el modelo (Esto tardará unos segundos el primer arranque)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Descargando/Cargando SAM 3 en {device}...", flush=True)
+    
     processor = Sam3Processor.from_pretrained("facebook/sam3")
     model = Sam3Model.from_pretrained("facebook/sam3").to(device)
-    print(f"Modelo cargado exitosamente en {device}.", flush=True)
+    
+    print("Modelo cargado exitosamente.", flush=True)
+
 except Exception as e:
     print(f"ERROR CRÍTICO AL CARGAR EL MODELO: {str(e)}", flush=True)
     sys.exit(1)
