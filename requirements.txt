@@ -1,7 +1,9 @@
-torch>=2.0.0
-transformers>=4.38.0
 runpod
 numpy
 opencv-python-headless
+torch
+torchvision
+transformers
+huggingface_hub
 pillow
 requests
