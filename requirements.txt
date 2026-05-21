@@ -3,7 +3,8 @@ numpy
 opencv-python-headless
 torch
 torchvision
-transformers
+--extra-index-url https://download.pytorch.org/whl/cu121
+git+https://github.com/huggingface/transformers.git
 huggingface_hub
 pillow
 requests
