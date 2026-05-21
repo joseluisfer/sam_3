@@ -3,7 +3,7 @@ FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
 WORKDIR /app
 
 # 1. Instalar dependencias del sistema operativo (Git y wget para los pesos)
-RUN apt-get update && apt-get install -y git wget && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git wget libgl1-mesa-glx libglib2.0-0 && rm -rf /var/lib/apt/lists/*
 
 # 2. Configurar variables de entorno para las cachés
 ENV HF_HOME=/app/cache
