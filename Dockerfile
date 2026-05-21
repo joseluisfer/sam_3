@@ -18,7 +18,7 @@ WORKDIR /app
 
 # 4. Descargar los pesos oficiales optimizados (SAM 2.1 Large / SAM 3 Preview)
 # Usamos el checkpoint 'sam2.1_hiera_large.pt' que es el motor de la demo actual
-RUN wget -O /app/weights/sam2.1_hiera_large.pt https://dl.fbaipublicfiles.com/segment_anything_2/012124/sam2.1_hiera_large.pt
+RUN wget -O /app/weights/sam2.1_hiera_large.pt https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
 
 # 5. Copiar los archivos de tu proyecto
 COPY requirements.txt .
