@@ -1,32 +1,37 @@
-name: Desplegar SAM 3 a Docker Hub
+name: Desplegar SAM 3 a GitHub Registry
 
-# Esto hace que la acción se ejecute automáticamente cada vez que hagas un push
 on:
   push:
     branches:
-      - main  # Cambia esto si tu rama principal se llama 'master'
+      - main  # O 'master' si esa es tu rama principal
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     
+    # Estos permisos dejan que GitHub guarde el contenedor en tu propia cuenta
+    permissions:
+      contents: read
+      packages: write
+      
     steps:
-      - name: Descargar el código del repositorio
+      - name: Descargar el código
         uses: actions/checkout@v3
 
-      - name: Iniciar sesión en Docker Hub
+      - name: Iniciar sesión en el almacén de GitHub (GHCR)
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # Esto es automático, no lo tienes que crear
 
-      - name: Construir y Subir imagen (Build & Push)
+      - name: Construir y Subir imagen
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          # Esto etiquetará tu imagen como tu_usuario/sam3-runpod:latest
-          tags: ${{ secrets.DOCKER_USERNAME }}/sam3-runpod:latest
-          # Aquí inyectamos de forma segura tu token de Hugging Face al Dockerfile
+          # Esto guarda la imagen con tu nombre de usuario de GitHub
+          tags: ghcr.io/${{ github.repository_owner }}/sam3-runpod:latest
+          # Aquí le pasamos tu token de Hugging Face al Dockerfile
           build-args: |
             HF_TOKEN=${{ secrets.HF_TOKEN }}
