@@ -1,102 +1,201 @@
 import runpod
-import os
 import torch
 import numpy as np
-import cv2
 import base64
+import cv2
 import requests
-from PIL import Image
+import os
 import sys
 
-# Añadir el repositorio clonado al PATH de Python por seguridad
-sys.path.append("/app/sam2_repo")
-from sam2.build_sam import build_sam2
-from sam2.sam2_image_predictor import SAM2ImagePredictor
+from huggingface_hub import login
+from transformers import AutoModel, AutoProcessor
 
-# Configurar dispositivo
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"🖥️ Dispositivo detectado por RunPod: {device}", flush=True)
+# -------------------------------------------------
+# Torch config
+# -------------------------------------------------
+torch.set_default_dtype(torch.float32)
 
-# Inicializar el predictor oficial de Meta con los pesos descargados
+# -------------------------------------------------
+# HF Login
+# -------------------------------------------------
+print("Logging into HuggingFace...", flush=True)
+
+login(token=os.environ["HF_TOKEN"])
+
+print("HF login successful", flush=True)
+
+# -------------------------------------------------
+# Load model
+# -------------------------------------------------
+print("Loading SAM3...", flush=True)
+
 try:
-    print("⏳ Cargando arquitectura SAM oficial en VRAM...", flush=True)
-    # El archivo de configuración se encuentra dentro del repo clonado
-    model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
-    checkpoint_path = "/app/weights/sam2.1_hiera_large.pt"
-    
-    sam2_model = build_sam2(model_cfg, checkpoint_path, device=device)
-    predictor = SAM2ImagePredictor(sam2_model)
-    print("✅ ¡Modelo cargado y listo en memoria!", flush=True)
+
+    processor = AutoProcessor.from_pretrained(
+        "facebook/sam3",
+        trust_remote_code=True
+    )
+
+    model = AutoModel.from_pretrained(
+        "facebook/sam3",
+        trust_remote_code=True,
+        torch_dtype=torch.float32
+    ).cuda()
+
+    model.eval()
+
+    print("SAM3 loaded successfully.", flush=True)
+
 except Exception as e:
-    print(f"❌ Error crítico cargando el modelo oficial: {str(e)}", flush=True)
+
+    print(f"MODEL LOAD ERROR: {str(e)}", flush=True)
     sys.exit(1)
 
+# -------------------------------------------------
+# Image loader
+# -------------------------------------------------
 def load_image(data):
-    """Descarga o decodifica la imagen de entrada."""
+
+    if not isinstance(data, str):
+        raise ValueError("Input must be string")
+
+    # URL
     if data.startswith("http"):
-        resp = requests.get(data, timeout=15)
+
+        print(f"Downloading: {data[:80]}", flush=True)
+
+        resp = requests.get(data, timeout=20)
         resp.raise_for_status()
-        img_bytes = resp.content
+
+        img_array = np.frombuffer(resp.content, np.uint8)
+
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
     else:
-        if "base64," in data:
-            data = data.split("base64,")[1]
+
+        if data.startswith("data:image"):
+            data = data.split(",")[1]
+
         img_bytes = base64.b64decode(data)
-        
-    img_array = np.frombuffer(img_bytes, np.uint8)
-    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-def mask_to_base64(mask_array):
-    """Convierte la máscara booleana a PNG codificado en Base64."""
-    mask_uint8 = (mask_array * 255).astype(np.uint8)
-    _, buffer = cv2.imencode('.png', mask_uint8)
-    return base64.b64encode(buffer).decode('utf-8')
+        img_array = np.frombuffer(img_bytes, np.uint8)
 
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+    if img is None:
+        raise ValueError("Image decode failed")
+
+    return img
+
+# -------------------------------------------------
+# Resize helper
+# -------------------------------------------------
+def resize_max(img, max_size=1280):
+
+    h, w = img.shape[:2]
+
+    scale = min(max_size / w, max_size / h)
+
+    if scale >= 1:
+        return img
+
+    nw = int(w * scale)
+    nh = int(h * scale)
+
+    return cv2.resize(img, (nw, nh))
+
+# -------------------------------------------------
+# Handler
+# -------------------------------------------------
 def handler(job):
+
     try:
+
         input_data = job["input"]
+
+        print(f"JOB RECEIVED: {job['id']}", flush=True)
+
+        # -------------------------------------------------
+        # Required image
+        # -------------------------------------------------
         if "file" not in input_data:
-            return {"error": "Falta el campo requerido 'file'"}
+            return {"error": "Missing 'file'"}
 
-        # 1. Cargar la imagen y pasarla al predictor de Meta
-        image_rgb = load_image(input_data["file"])
-        predictor.set_image(image_rgb)
+        img = load_image(input_data["file"])
 
-        # 2. Leer los tipos de interacciones (Prompts de clics o recuadros)
-        points = input_data.get("points")   # Formato: [[x1, y1], [x2, y2]]
-        labels = input_data.get("labels")   # Formato: [1, 0] (1=incluir, 0=excluir)
-        box = input_data.get("box")         # Formato: [x_min, y_min, x_max, y_max]
-
-        input_points = np.array(points) if points else None
-        input_labels = np.array(labels) if labels else None
-        input_box = np.array(box) if box else None
-
-        if input_points is None and input_box is None:
-            return {"error": "Debes enviar coordenadas en 'points' o un recuadro en 'box' para segmentar."}
-
-        # 3. Ejecutar la inferencia de la arquitectura de Meta
-        print("🔮 Ejecutando segmentación...", flush=True)
-        masks, scores, logits = predictor.predict(
-            point_coords=input_points,
-            point_labels=input_labels,
-            box=input_box,
-            multimask_output=False # Devolver la mejor máscara consolidada
+        img = resize_max(
+            img,
+            input_data.get("max_size", 1280)
         )
 
-        # 4. Formatear la salida para la API
-        # masks tiene forma [N, H, W], extraemos la máscara principal
-        best_mask = masks[0]
-        best_score = float(scores[0])
+        print(f"Main image shape: {img.shape}", flush=True)
 
+        # -------------------------------------------------
+        # Optional pattern
+        # -------------------------------------------------
+        pattern_img = None
+
+        if input_data.get("pattern"):
+
+            pattern_img = load_image(input_data["pattern"])
+
+            pattern_img = resize_max(pattern_img, 512)
+
+            print(
+                f"Pattern shape: {pattern_img.shape}",
+                flush=True
+            )
+
+        # -------------------------------------------------
+        # Optional text
+        # -------------------------------------------------
+        text_prompt = input_data.get("text", "object")
+
+        print(f"Text prompt: {text_prompt}", flush=True)
+
+        # -------------------------------------------------
+        # Processor
+        # -------------------------------------------------
+        inputs = processor(
+            images=img,
+            text=text_prompt,
+            return_tensors="pt"
+        )
+
+        inputs = {
+            k: v.float().cuda()
+            if torch.is_tensor(v)
+            else v
+            for k, v in inputs.items()
+        }
+
+        print("Running inference...", flush=True)
+
+        with torch.no_grad():
+
+            outputs = model(**inputs)
+
+        print("Inference OK", flush=True)
+
+        # -------------------------------------------------
+        # Raw output
+        # -------------------------------------------------
         return {
             "status": "success",
-            "confidence": best_score,
-            "mask_base64": mask_to_base64(best_mask)
+            "message": "SAM3 inference completed",
+            "output_keys": list(outputs.keys())
         }
 
     except Exception as e:
-        print(f"❌ Error en el Job Handler: {str(e)}", flush=True)
-        return {"error": str(e)}
 
-# Iniciar el bucle de RunPod
+        print(f"INFERENCE ERROR: {str(e)}", flush=True)
+
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+# -------------------------------------------------
+# RunPod
+# -------------------------------------------------
 runpod.serverless.start({"handler": handler})
