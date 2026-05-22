@@ -18,10 +18,11 @@ RUN pip install --no-cache-dir \
     setuptools wheel
     
 # 3. SAM 3 desde el repo oficial (necesita numpy 1.26 instalado antes)
+
 RUN git clone https://github.com/facebookresearch/sam3.git && \
     cd sam3 && \
-    pip install --no-cache-dir -e .
-
+    pip install --no-cache-dir .
+    
 # 4. OpenCV DESPUÉS de sam3 para que no rompa numpy
 #    --no-deps evita que reinstale numpy>=2
 RUN pip install --no-cache-dir --no-deps opencv-python-headless
