@@ -1,201 +1,132 @@
 import runpod
+import os
 import torch
 import numpy as np
 import base64
 import cv2
 import requests
-import os
-import sys
 
 from huggingface_hub import login
 from transformers import AutoModel, AutoProcessor
 
 # -------------------------------------------------
-# Torch config
+# CONFIG ESTABLE
 # -------------------------------------------------
 torch.set_default_dtype(torch.float32)
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+print("Device:", DEVICE, flush=True)
 
 # -------------------------------------------------
-# HF Login
+# HF LOGIN
 # -------------------------------------------------
 print("Logging into HuggingFace...", flush=True)
-
 login(token=os.environ["HF_TOKEN"])
-
-print("HF login successful", flush=True)
+print("HF OK", flush=True)
 
 # -------------------------------------------------
-# Load model
+# LOAD SAM3 (runtime only)
 # -------------------------------------------------
 print("Loading SAM3...", flush=True)
 
-try:
+processor = AutoProcessor.from_pretrained(
+    "facebook/sam3",
+    trust_remote_code=True
+)
 
-    processor = AutoProcessor.from_pretrained(
-        "facebook/sam3",
-        trust_remote_code=True
-    )
+model = AutoModel.from_pretrained(
+    "facebook/sam3",
+    trust_remote_code=True,
+    torch_dtype=torch.float32
+).to(DEVICE)
 
-    model = AutoModel.from_pretrained(
-        "facebook/sam3",
-        trust_remote_code=True,
-        torch_dtype=torch.float32
-    ).cuda()
+model.eval()
 
-    model.eval()
-
-    print("SAM3 loaded successfully.", flush=True)
-
-except Exception as e:
-
-    print(f"MODEL LOAD ERROR: {str(e)}", flush=True)
-    sys.exit(1)
+print("SAM3 loaded", flush=True)
 
 # -------------------------------------------------
-# Image loader
+# IMAGE LOADER
 # -------------------------------------------------
 def load_image(data):
 
-    if not isinstance(data, str):
-        raise ValueError("Input must be string")
-
-    # URL
     if data.startswith("http"):
-
-        print(f"Downloading: {data[:80]}", flush=True)
-
-        resp = requests.get(data, timeout=20)
-        resp.raise_for_status()
-
-        img_array = np.frombuffer(resp.content, np.uint8)
-
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-
+        r = requests.get(data, timeout=20)
+        arr = np.frombuffer(r.content, np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     else:
-
         if data.startswith("data:image"):
             data = data.split(",")[1]
-
-        img_bytes = base64.b64decode(data)
-
-        img_array = np.frombuffer(img_bytes, np.uint8)
-
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        img = cv2.imdecode(
+            np.frombuffer(base64.b64decode(data), np.uint8),
+            cv2.IMREAD_COLOR
+        )
 
     if img is None:
-        raise ValueError("Image decode failed")
+        raise ValueError("Invalid image")
 
     return img
 
 # -------------------------------------------------
-# Resize helper
+# RESIZE SAFE
 # -------------------------------------------------
-def resize_max(img, max_size=1280):
+def resize(img, max_size=1024):
 
     h, w = img.shape[:2]
-
     scale = min(max_size / w, max_size / h)
 
     if scale >= 1:
         return img
 
-    nw = int(w * scale)
-    nh = int(h * scale)
-
-    return cv2.resize(img, (nw, nh))
+    return cv2.resize(img, (int(w * scale), int(h * scale)))
 
 # -------------------------------------------------
-# Handler
+# HANDLER
 # -------------------------------------------------
 def handler(job):
 
     try:
+        inp = job["input"]
 
-        input_data = job["input"]
+        img = resize(load_image(inp["file"]), 1024)
 
-        print(f"JOB RECEIVED: {job['id']}", flush=True)
+        text = inp.get("text", "object")
 
-        # -------------------------------------------------
-        # Required image
-        # -------------------------------------------------
-        if "file" not in input_data:
-            return {"error": "Missing 'file'"}
+        pattern = inp.get("pattern", None)
 
-        img = load_image(input_data["file"])
-
-        img = resize_max(
-            img,
-            input_data.get("max_size", 1280)
-        )
-
-        print(f"Main image shape: {img.shape}", flush=True)
+        print("Text:", text, flush=True)
 
         # -------------------------------------------------
-        # Optional pattern
-        # -------------------------------------------------
-        pattern_img = None
-
-        if input_data.get("pattern"):
-
-            pattern_img = load_image(input_data["pattern"])
-
-            pattern_img = resize_max(pattern_img, 512)
-
-            print(
-                f"Pattern shape: {pattern_img.shape}",
-                flush=True
-            )
-
-        # -------------------------------------------------
-        # Optional text
-        # -------------------------------------------------
-        text_prompt = input_data.get("text", "object")
-
-        print(f"Text prompt: {text_prompt}", flush=True)
-
-        # -------------------------------------------------
-        # Processor
+        # TEXT + IMAGE PROCESSING
         # -------------------------------------------------
         inputs = processor(
             images=img,
-            text=text_prompt,
+            text=text,
             return_tensors="pt"
         )
 
-        inputs = {
-            k: v.float().cuda()
-            if torch.is_tensor(v)
-            else v
-            for k, v in inputs.items()
-        }
-
-        print("Running inference...", flush=True)
+        # mover a GPU + FP32 FIX
+        for k in inputs:
+            if torch.is_tensor(inputs[k]):
+                inputs[k] = inputs[k].to(DEVICE).float()
 
         with torch.no_grad():
 
             outputs = model(**inputs)
 
-        print("Inference OK", flush=True)
-
-        # -------------------------------------------------
-        # Raw output
-        # -------------------------------------------------
         return {
             "status": "success",
-            "message": "SAM3 inference completed",
-            "output_keys": list(outputs.keys())
+            "message": "SAM3 inference done",
+            "keys": list(outputs.keys())
         }
 
     except Exception as e:
 
-        print(f"INFERENCE ERROR: {str(e)}", flush=True)
-
         return {
             "status": "error",
-            "message": str(e)
+            "error": str(e)
         }
 
 # -------------------------------------------------
-# RunPod
+# RUNPOD
 # -------------------------------------------------
 runpod.serverless.start({"handler": handler})
