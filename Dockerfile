@@ -1,27 +1,33 @@
-# Usamos la imagen completa que ya trae Git y compiladores C++ de fábrica
 FROM python:3.12
-
 ENV TZ=Europe/Madrid
-
 WORKDIR /app
 
-# 1. Instalamos PyTorch con soporte para CUDA (GPU)
-RUN pip install --no-cache-dir torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+# 1. PyTorch con CUDA
+RUN pip install --no-cache-dir torch==2.10.0 torchvision \
+    --index-url https://download.pytorch.org/whl/cu128
 
-# 2. Resto de dependencias de tu API (usamos opencv headless para no depender de librerías del sistema)
-RUN pip install --no-cache-dir runpod opencv-python-headless numpy transformers huggingface_hub pillow setuptools wheel
+# 2. Dependencias base — numpy 1.26 primero porque sam3 exige numpy<2
+#    opencv se instala DESPUÉS para que no lo sobreescriba
+RUN pip install --no-cache-dir \
+    "numpy==1.26.4" \
+    pillow \
+    runpod \
+    transformers \
+    huggingface_hub \
+    setuptools wheel
 
-# 3. Instalamos SAM 3 desde el repositorio oficial
+# 3. SAM 3 desde el repo oficial (necesita numpy 1.26 instalado antes)
 RUN git clone https://github.com/facebookresearch/sam3.git && \
     cd sam3 && \
     pip install --no-cache-dir -e .
 
-# 4. Configuramos el Token de Hugging Face y descargamos el "cerebro"
-ARG HF_TOKEN
-ENV HF_TOKEN=${HF_TOKEN} 
-RUN python -c "from huggingface_hub import login; login(token='$HF_TOKEN'); from sam3.model_builder import build_sam3_image_model; build_sam3_image_model()"
+# 4. OpenCV DESPUÉS de sam3 para que no rompa numpy
+#    --no-deps evita que reinstale numpy>=2
+RUN pip install --no-cache-dir --no-deps opencv-python-headless
 
-# 5. Copiamos tu código
+# 5. Copiamos el handler
+# ⚠️  NO pre-descargamos el modelo aquí: el HF_TOKEN solo existe en runtime,
+#     no durante docker build. La descarga ocurre en app.py al arrancar.
 COPY app.py .
 
 CMD ["python", "-u", "app.py"]
