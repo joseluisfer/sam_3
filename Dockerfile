@@ -1,41 +1,67 @@
-FROM python:3.12
-ENV TZ=Europe/Madrid
+# -------------------------------------------------
+# Base PyTorch + CUDA
+# -------------------------------------------------
+FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+
 WORKDIR /app
 
-# 1. PyTorch con CUDA
-RUN pip install --no-cache-dir torch==2.10.0 torchvision \
-    --index-url https://download.pytorch.org/whl/cu128
+# -------------------------------------------------
+# Cache HF/Torch
+# -------------------------------------------------
+ENV HF_HOME=/app/cache
+ENV TORCH_HOME=/app/cache
+ENV TRANSFORMERS_CACHE=/app/cache
+ENV HUGGINGFACE_HUB_CACHE=/app/cache
 
-# 2. Dependencias base — numpy 1.26 primero porque sam3 exige numpy<2
-#    opencv se instala DESPUÉS para que no lo sobreescriba
-RUN pip install --no-cache-dir \
-    "numpy==1.26.4" \
-    pillow \
-    runpod \
-    transformers \
-    huggingface_hub \
-    einops \
-    setuptools wheel
-    
-# 3. SAM 3 desde el repo oficial (necesita numpy 1.26 instalado antes)
+RUN mkdir -p /app/cache
 
-RUN git clone https://github.com/facebookresearch/sam3.git && \
-    cd sam3 && \
-    pip install --no-cache-dir .
-    
-# 4. OpenCV DESPUÉS de sam3 para que no rompa numpy
-#    --no-deps evita que reinstale numpy>=2
-RUN pip install --no-cache-dir --no-deps opencv-python-headless
+# -------------------------------------------------
+# Dependencias sistema
+# -------------------------------------------------
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    libglib2.0-0 \
+    libgl1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ make python3-dev \
- && rm -rf /var/lib/apt/lists/*
+# -------------------------------------------------
+# Python deps
+# -------------------------------------------------
+COPY requirements.txt .
 
-RUN pip install --no-cache-dir pycocotools
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Copiamos el handler
-# ⚠️  NO pre-descargamos el modelo aquí: el HF_TOKEN solo existe en runtime,
-#     no durante docker build. La descarga ocurre en app.py al arrancar.
-COPY app.py .
+# -------------------------------------------------
+# Handler
+# -------------------------------------------------
+COPY handler.py .
 
-CMD ["python", "-u", "app.py"]
+# -------------------------------------------------
+# Precarga SAM3
+# HF_TOKEN debe existir en build args
+# -------------------------------------------------
+ARG HF_TOKEN
+
+RUN python -c " \
+from huggingface_hub import login; \
+from transformers import AutoModel; \
+import torch; \
+login(token='${HF_TOKEN}'); \
+print('Downloading SAM3...'); \
+model = AutoModel.from_pretrained( \
+    'facebook/sam3', \
+    trust_remote_code=True, \
+    torch_dtype=torch.float32 \
+); \
+print('SAM3 downloaded successfully'); \
+"
+
+# -------------------------------------------------
+# Permisos cache
+# -------------------------------------------------
+RUN chmod -R 777 /app/cache
+
+# -------------------------------------------------
+# Launch
+# -------------------------------------------------
+CMD ["python", "-u", "handler.py"]
