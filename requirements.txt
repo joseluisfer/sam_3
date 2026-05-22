@@ -1,6 +1,6 @@
 runpod
-torch
-torchvision
+torch>=2.4.0
+torchvision>=0.19.0
 numpy
 opencv-python-headless
 requests
