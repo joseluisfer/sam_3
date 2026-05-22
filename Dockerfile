@@ -1,29 +1,27 @@
-FROM python:3.12-slim
+# Usamos la imagen completa que ya trae Git y compiladores C++ de fábrica
+FROM python:3.12
 
-ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Madrid
-
-# 1. Al usar python:3.12-slim, los repositorios están sanos y el apt-get update funcionará sin error 100.
-RUN apt-get update && apt-get install -y git wget libgl1-mesa-glx libglib2.0-0 tzdata build-essential && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 2. Instalamos PyTorch con soporte para CUDA exactamente como indica el README de Meta
+# 1. Instalamos PyTorch con soporte para CUDA (GPU)
 RUN pip install --no-cache-dir torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
 
-# 3. Resto de dependencias de tu API
+# 2. Resto de dependencias de tu API (usamos opencv headless para no depender de librerías del sistema)
 RUN pip install --no-cache-dir runpod opencv-python-headless numpy transformers huggingface_hub pillow setuptools wheel
 
-# 4. Instalamos SAM 3 desde el repositorio oficial
+# 3. Instalamos SAM 3 desde el repositorio oficial
 RUN git clone https://github.com/facebookresearch/sam3.git && \
     cd sam3 && \
     pip install --no-cache-dir -e .
 
-# 5. Configuramos el Token de Hugging Face y descargamos los pesos de la IA
+# 4. Configuramos el Token de Hugging Face y descargamos el "cerebro"
 ARG HF_TOKEN
 ENV HF_TOKEN=${HF_TOKEN} 
 RUN python -c "from huggingface_hub import login; login(token='$HF_TOKEN'); from sam3.model_builder import build_sam3_image_model; build_sam3_image_model()"
 
+# 5. Copiamos tu código
 COPY app.py .
 
 CMD ["python", "-u", "app.py"]
