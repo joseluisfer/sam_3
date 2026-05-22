@@ -14,8 +14,9 @@ RUN pip install --no-cache-dir \
     runpod \
     transformers \
     huggingface_hub \
+    einops \
     setuptools wheel
-
+    
 # 3. SAM 3 desde el repo oficial (necesita numpy 1.26 instalado antes)
 RUN git clone https://github.com/facebookresearch/sam3.git && \
     cd sam3 && \
