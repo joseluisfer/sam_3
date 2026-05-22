@@ -13,17 +13,15 @@ import cv2
 import torch
 import io
 from PIL import Image
-from huggingface_hub import login
 
 # ─────────────────────────────────────────────────────────────
-# 1. Login con el token que RunPod inyecta en runtime
+# 1. HF_TOKEN — huggingface_hub lo lee automáticamente del entorno.
+#    No hace falta llamar a login(). Solo verificamos que esté presente.
 # ─────────────────────────────────────────────────────────────
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
-if not HF_TOKEN:
-    print("[ERROR] HF_TOKEN no encontrado. Comprueba la configuración del endpoint.", flush=True)
+if not os.environ.get("HF_TOKEN"):
+    print("[WARN] HF_TOKEN no encontrado. La descarga de modelos privados fallará.", flush=True)
 else:
-    login(token=HF_TOKEN)
-    print("[OK] Login en Hugging Face completado.", flush=True)
+    print("[OK] HF_TOKEN detectado.", flush=True)
 
 # ─────────────────────────────────────────────────────────────
 # 2. Carga del modelo (ocurre una sola vez al arrancar)
