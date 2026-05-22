@@ -1,12 +1,8 @@
 runpod
 torch
 torchvision
-torchaudio
 numpy
 opencv-python-headless
-pillow
 requests
 transformers
 huggingface_hub
-accelerate
-safetensors
