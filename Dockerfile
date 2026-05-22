@@ -26,6 +26,12 @@ RUN git clone https://github.com/facebookresearch/sam3.git && \
 #    --no-deps evita que reinstale numpy>=2
 RUN pip install --no-cache-dir --no-deps opencv-python-headless
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ make python3-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir pycocotools
+
 # 5. Copiamos el handler
 # ⚠️  NO pre-descargamos el modelo aquí: el HF_TOKEN solo existe en runtime,
 #     no durante docker build. La descarga ocurre en app.py al arrancar.
