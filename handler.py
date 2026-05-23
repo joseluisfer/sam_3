@@ -21,7 +21,7 @@ print("Device:", DEVICE, flush=True)
 # HF LOGIN
 # -------------------------------------------------
 print("Logging into HuggingFace...", flush=True)
-login(token=os.environ["HF_TOKEN"])
+login(token=os.environ.get("HF_TOKEN", ""))
 print("HF OK", flush=True)
 
 # -------------------------------------------------
@@ -48,7 +48,6 @@ print("SAM3 loaded", flush=True)
 # IMAGE LOADER
 # -------------------------------------------------
 def load_image(data):
-
     if data.startswith("http"):
         r = requests.get(data, timeout=20)
         arr = np.frombuffer(r.content, np.uint8)
@@ -64,13 +63,13 @@ def load_image(data):
     if img is None:
         raise ValueError("Invalid image")
 
-    return img
+    # CORRECCIÓN 1: Convertir de BGR a RGB para que Hugging Face entienda los colores
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 # -------------------------------------------------
 # RESIZE SAFE
 # -------------------------------------------------
 def resize(img, max_size=1024):
-
     h, w = img.shape[:2]
     scale = min(max_size / w, max_size / h)
 
@@ -110,7 +109,6 @@ def encode_mask_to_base64(mask_2d):
 # HANDLER
 # -------------------------------------------------
 def handler(job):
-
     try:
         inp = job["input"]
 
@@ -123,20 +121,33 @@ def handler(job):
         print("Text:", text, flush=True)
 
         # -------------------------------------------------
-        # TEXT + IMAGE PROCESSING
+        # TEXT + IMAGE PROCESSING (A PRUEBA DE FALLOS)
         # -------------------------------------------------
-        inputs = processor(
-            images=img,
-            text=text,
-            return_tensors="pt"
-        )
+        # CORRECCIÓN 2: Bloque try/except para evadir el error de Meta con "text" vs "prompt"
+        try:
+            inputs = processor(
+                images=img,
+                text=text,
+                return_tensors="pt"
+            )
+        except TypeError:
+            inputs = processor(
+                images=img,
+                prompt=text,
+                return_tensors="pt"
+            )
 
-        # mover a GPU + FP32 FIX
-        for k in inputs:
-            if torch.is_tensor(inputs[k]):
-                inputs[k] = inputs[k].to(DEVICE).float()
+        # -------------------------------------------------
+        # MOVER A GPU (SAFE CASTING)
+        # -------------------------------------------------
+        # CORRECCIÓN 3: Respetamos los enteros para el texto y pasamos a float32 solo la imagen
+        inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+        
+        if "pixel_values" in inputs and inputs["pixel_values"].dtype != torch.float32:
+            inputs["pixel_values"] = inputs["pixel_values"].float()
 
-with torch.no_grad():
+        # CORRECCIÓN 4: Indentación correcta
+        with torch.no_grad():
             outputs = model(**inputs)
 
         # -------------------------------------------------
@@ -187,6 +198,12 @@ with torch.no_grad():
                 "score": round(score, 3),
                 "mask_base64": mask_b64
             }]
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
         }
 
 # -------------------------------------------------
