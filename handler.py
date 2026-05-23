@@ -5,97 +5,62 @@ import numpy as np
 import base64
 import cv2
 import requests
+import io
+from PIL import Image
 
 from huggingface_hub import login
-from transformers import AutoModel, AutoProcessor
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.sam3_image_processor import Sam3Processor
 
 # -------------------------------------------------
-# CONFIG ESTABLE
-# -------------------------------------------------
-torch.set_default_dtype(torch.float32)
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-print("Device:", DEVICE, flush=True)
-
-# -------------------------------------------------
-# HF LOGIN
+# HF LOGIN (Obligatorio para descargar los pesos)
 # -------------------------------------------------
 print("Logging into HuggingFace...", flush=True)
 login(token=os.environ.get("HF_TOKEN", ""))
 print("HF OK", flush=True)
 
 # -------------------------------------------------
-# LOAD SAM3 (runtime only)
+# LOAD SAM3 (Nativo de Meta)
 # -------------------------------------------------
-print("Loading SAM3...", flush=True)
+print("Loading SAM3 Native API...", flush=True)
 
-processor = AutoProcessor.from_pretrained(
-    "facebook/sam3",
-    trust_remote_code=True
-)
+# Usamos la API oficial de Meta, no la de Hugging Face Transformers
+model = build_sam3_image_model()
+processor = Sam3Processor(model)
 
-model = AutoModel.from_pretrained(
-    "facebook/sam3",
-    trust_remote_code=True,
-    torch_dtype=torch.float32
-).to(DEVICE)
-
-model.eval()
-
-print("SAM3 loaded", flush=True)
+print("SAM3 loaded successfully", flush=True)
 
 # -------------------------------------------------
-# IMAGE LOADER
+# IMAGE LOADER (Ahora usamos PIL como exige Meta)
 # -------------------------------------------------
-def load_image(data):
+def load_image_pil(data):
     if data.startswith("http"):
         r = requests.get(data, timeout=20)
-        arr = np.frombuffer(r.content, np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        image_bytes = r.content
     else:
         if data.startswith("data:image"):
             data = data.split(",")[1]
-        img = cv2.imdecode(
-            np.frombuffer(base64.b64decode(data), np.uint8),
-            cv2.IMREAD_COLOR
-        )
+        image_bytes = base64.b64decode(data)
 
-    if img is None:
-        raise ValueError("Invalid image")
+    # Meta exige formato PIL y en RGB nativo
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-    # CORRECCIÓN 1: Convertir de BGR a RGB para que Hugging Face entienda los colores
-    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-# -------------------------------------------------
-# RESIZE SAFE
-# -------------------------------------------------
-def resize(img, max_size=1024):
-    h, w = img.shape[:2]
+    # Resize por seguridad (Max 1024px)
+    max_size = 1024
+    w, h = image.size
     scale = min(max_size / w, max_size / h)
+    
+    if scale < 1:
+        new_w, new_h = int(w * scale), int(h * scale)
+        image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    if scale >= 1:
-        return img
-
-    return cv2.resize(img, (int(w * scale), int(h * scale)))
+    return image
 
 # -------------------------------------------------
 # POST-PROCESSING PARA ANDROID
 # -------------------------------------------------
-def get_bbox_from_mask(mask_2d):
-    """Calcula el Bounding Box [x_min, y_min, x_max, y_max] buscando los bordes de la máscara"""
-    y_indices, x_indices = np.where(mask_2d > 0)
-    if len(x_indices) == 0 or len(y_indices) == 0:
-        return [0, 0, 0, 0] # Si no detectó nada, devuelve 0
-    
-    return [
-        int(np.min(x_indices)), 
-        int(np.min(y_indices)), 
-        int(np.max(x_indices)), 
-        int(np.max(y_indices))
-    ]
-
 def encode_mask_to_base64(mask_2d):
-    """Convierte la matriz a un PNG con fondo transparente y máscara blanca"""
+    """Convierte la matriz numpy a un PNG con fondo transparente y máscara blanca"""
     h, w = mask_2d.shape
     rgba = np.zeros((h, w, 4), dtype=np.uint8)
     
@@ -104,100 +69,64 @@ def encode_mask_to_base64(mask_2d):
     
     _, buffer = cv2.imencode('.png', rgba)
     return base64.b64encode(buffer).decode('utf-8')
-    
+
 # -------------------------------------------------
 # HANDLER
 # -------------------------------------------------
 def handler(job):
     try:
         inp = job["input"]
-
-        img = resize(load_image(inp["file"]), 1024)
-
-        text = inp.get("text", "object")
-
-        pattern = inp.get("pattern", None)
-
-        print("Text:", text, flush=True)
-
-        # -------------------------------------------------
-        # TEXT + IMAGE PROCESSING (A PRUEBA DE FALLOS)
-        # -------------------------------------------------
-        # CORRECCIÓN 2: Bloque try/except para evadir el error de Meta con "text" vs "prompt"
-        try:
-            inputs = processor(
-                images=img,
-                text=text,
-                return_tensors="pt"
-            )
-        except TypeError:
-            inputs = processor(
-                images=img,
-                prompt=text,
-                return_tensors="pt"
-            )
-
-        # -------------------------------------------------
-        # MOVER A GPU (SAFE CASTING)
-        # -------------------------------------------------
-        # CORRECCIÓN 3: Respetamos los enteros para el texto y pasamos a float32 solo la imagen
-        inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
         
-        if "pixel_values" in inputs and inputs["pixel_values"].dtype != torch.float32:
-            inputs["pixel_values"] = inputs["pixel_values"].float()
+        # 1. Cargamos el texto y la imagen
+        text_prompt = inp.get("text", "object")
+        print(f"Buscando: {text_prompt}", flush=True)
+        
+        image = load_image_pil(inp["file"])
 
-        # CORRECCIÓN 4: Indentación correcta
-        with torch.no_grad():
-            outputs = model(**inputs)
+        # -------------------------------------------------
+        # INFERENCIA NATIVA (Exactamente como dicta el README)
+        # -------------------------------------------------
+        # Cargamos la imagen en el cerebro del procesador
+        inference_state = processor.set_image(image)
+        
+        # Le enviamos el texto (usando la variable nativa 'prompt')
+        output = processor.set_text_prompt(state=inference_state, prompt=text_prompt)
 
         # -------------------------------------------------
         # EXTRACCIÓN DE RESULTADOS
         # -------------------------------------------------
-        # 1. Localizar los tensores de las máscaras (Hugging Face puede llamarlas distinto)
-        raw_masks = getattr(outputs, "pred_masks", None)
-        if raw_masks is None:
-            raw_masks = outputs.get("pred_masks", outputs.get("masks"))
-            
-        if raw_masks is None:
-            raise ValueError(f"No se encontraron máscaras en el output. Keys disponibles: {list(outputs.keys())}")
-
-        # 2. Pasamos a CPU y a Numpy
-        masks_np = raw_masks.detach().cpu().numpy()
-
-        # 3. SAM suele devolver arrays de 4 o 5 dimensiones [Batch, Prompts, Niveles, H, W]
-        # Vamos a ir quitando dimensiones hasta quedarnos con la matriz 2D de la máscara
-        while masks_np.ndim > 2:
-            masks_np = masks_np[0]
-            
-        mask_2d = masks_np
+        # La API nativa ya nos da exactamente lo que queremos bien ordenado
+        masks = output["masks"]
+        boxes = output["boxes"]
+        scores = output["scores"]
         
-        # Si la máscara viene como logits (números decimales), aplicamos umbral > 0
-        if mask_2d.dtype != bool:
-            mask_2d = mask_2d > 0.0
-
-        # 4. Redimensionamos la máscara de vuelta al tamaño de la imagen que metimos
-        orig_h, orig_w = img.shape[:2]
-        # Usamos INTER_NEAREST para no crear grises borrosos en los bordes de la máscara
-        mask_resized = cv2.resize(mask_2d.astype(np.uint8), (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
-
-        # 5. Generamos la caja y la imagen Base64 para Android
-        bbox = get_bbox_from_mask(mask_resized)
-        mask_b64 = encode_mask_to_base64(mask_resized)
-
-        # Intentamos extraer el score de confianza si existe, si no, devolvemos 1.0
-        score = 1.0
-        raw_scores = getattr(outputs, "iou_scores", outputs.get("iou_scores"))
-        if raw_scores is not None:
-            score = float(raw_scores.detach().cpu().numpy().flatten()[0])
+        resultados = []
+        
+        if boxes is not None and len(boxes) > 0:
+            # Iteramos sobre todas las detecciones que haya encontrado
+            for i in range(len(boxes)):
+                # Extraemos la máscara matemática a la CPU y limpiamos dimensiones
+                mask_np = masks[i].cpu().numpy()
+                while mask_np.ndim > 2:
+                    mask_np = mask_np[0]
+                    
+                # Convertimos a Base64
+                mask_b64 = encode_mask_to_base64(mask_np)
+                
+                # Extraemos coordenadas de la caja y confianza
+                box_np = boxes[i].cpu().numpy().tolist()
+                score_val = float(scores[i].cpu().numpy())
+                
+                resultados.append({
+                    "box": box_np,
+                    "score": round(score_val, 3),
+                    "mask_base64": mask_b64
+                })
 
         return {
             "status": "success",
-            "prompt": text,
-            "detections": [{
-                "box": bbox,
-                "score": round(score, 3),
-                "mask_base64": mask_b64
-            }]
+            "prompt": text_prompt,
+            "detections": resultados
         }
 
     except Exception as e:
