@@ -4,3 +4,4 @@ numpy
 requests
 pillow
 huggingface-hub
+einops
