@@ -24,11 +24,17 @@ print("HF OK", flush=True)
 # -------------------------------------------------
 print("Loading SAM3 Native API...", flush=True)
 
-# Usamos la API oficial de Meta, no la de Hugging Face Transformers
-model = build_sam3_image_model()
+# Detectamos la tarjeta gráfica
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Construimos el modelo, lo movemos a la GPU y forzamos sus pesos a Float32
+model = build_sam3_image_model().to(device=DEVICE, dtype=torch.float32)
+model.eval()
+
 processor = Sam3Processor(model)
 
-print("SAM3 loaded successfully", flush=True)
+print(f"SAM3 loaded successfully on {DEVICE}", flush=True)
+
 
 # -------------------------------------------------
 # IMAGE LOADER (Ahora usamos PIL como exige Meta)
